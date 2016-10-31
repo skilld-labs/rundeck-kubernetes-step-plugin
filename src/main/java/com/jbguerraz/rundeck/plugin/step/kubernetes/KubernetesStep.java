@@ -199,15 +199,15 @@ public class KubernetesStep implements StepPlugin, Describable {
                         client.pods().inNamespace(namespace).withName(pod.getMetadata().getName()).delete();
                     }
                     client.close();
-                } catch (KubernetesClientException | InterruptedException | IOException e) {
+                } catch (KubernetesClientException | InterruptedException e) {
                     logger.error(e.getMessage(), e);
                     throw new StepException(e.getMessage(), Reason.UnexepectedFailure);
                 }
-            } catch (KubernetesClientException | StepException | IOException e) {
+            } catch (KubernetesClientException | StepException e) {
                 logger.error(e.getMessage(), e);
                 throw e;
             }
-        } catch (KubernetesClientException | StepException | IOException e) {
+        } catch (KubernetesClientException | StepException e) {
             logger.error(e.getMessage(), e);
             throw new StepException(e.getMessage(), Reason.UnexepectedFailure);
         }
