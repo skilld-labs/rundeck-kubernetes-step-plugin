@@ -167,6 +167,7 @@ public class KubernetesStep implements StepPlugin, Describable {
                 public void eventReceived(Action action, Pod resource) {
                     String name = resource.getMetadata().getName();
                     String deletionTimeStamp = resource.getMetadata().getDeletionTimestamp();
+                    String phase = resource.getStatus().getPhase();
                     if(phase.equals("Succeeded") && null ==	deletionTimeStamp) {
                         pluginLogger.log(2, name + " : " + client.pods().inNamespace(namespace).withName(name).getLog(true));
                     }
