@@ -92,7 +92,7 @@ public class KubernetesStep implements StepPlugin, Describable {
             .property(PropertyUtil.string(COMMAND, "Command", "The command to run in the container", true, null))
             .property(PropertyUtil.string(NODE_SELECTOR, "Node selector", "Kubernetes node label selector", false, null))
             .property(PropertyUtil.string(NAMESPACE, "Namespace", "Kubernetes namespace", true, "default"))
-            .property(PropertyUtil.string(ACTIVE_DEADLINE, "Active deadline", "The job deadline (in seconds)", false, null))
+            .property(PropertyUtil.integer(ACTIVE_DEADLINE, "Active deadline", "The job deadline (in seconds)", false, null))
             .property(PropertyUtil.select(RESTART_POLICY, "Restart policy", "The restart policy to apply to the job", true, "Never", Arrays.asList("Never", "OnFailure")))
             .property(PropertyUtil.integer(COMPLETIONS, "Completions", "Number of pods to wait for success exit before considering the job complete", true, "1"))
             .property(PropertyUtil.integer(PARALLELISM, "Parallelism", "Number of pods running at any instant", true, "1"))
@@ -195,8 +195,13 @@ public class KubernetesStep implements StepPlugin, Describable {
                     podWatch.close();
                     client.extensions().jobs().inNamespace(namespace).withName(jobName).delete();
                     PodList podList = client.pods().inNamespace(namespace).withLabel("job-name", jobName).list();
+		    String name = null;
                     for (Pod pod : podList.getItems()) {
-                        client.pods().inNamespace(namespace).withName(pod.getMetadata().getName()).delete();
+		    	name = pod.getMetadata().getName();
+			if(pod.getStatus().getPhase().equals("Pending")) {
+				pluginLogger.log(0, name + " : Timeout");
+			}
+                        client.pods().inNamespace(namespace).withName(name).delete();
                     }
                     client.close();
                 } catch (KubernetesClientException | InterruptedException e) {
