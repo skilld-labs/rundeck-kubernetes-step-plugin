@@ -55,6 +55,8 @@ import java.io.File;
 import java.io.IOException;
 import java.util.*;
 import java.util.stream.Collectors;
+import java.util.regex.Pattern;
+import java.util.regex.Matcher;
 
 
 /**
@@ -118,6 +120,11 @@ public class KubernetesStep implements StepPlugin, Describable {
             if(null != configuration.get("activeDeadlineSeconds")){
                 activeDeadlineSeconds = Long.valueOf(configuration.get("activeDeadlineSeconds").toString());
             }
+            List<String> command = new ArrayList<String>();
+            Matcher commandArguments = Pattern.compile("(\"[^\"]*\"|\\S+)").matcher(configuration.get("command").toString());
+            while (commandArguments.find()) {
+	        command.add(commandArguments.group(1).replace("\"", ""));
+            }
             Job job = new JobBuilder()
                 .withNewMetadata()
                     .withName(jobName)
@@ -140,7 +147,7 @@ public class KubernetesStep implements StepPlugin, Describable {
                               .addNewContainer()
                                   .withName(jobName)
                                   .withImage(configuration.get("image").toString())
-                                  .withCommand(configuration.get("command").toString().split(" "))
+                                  .withCommand(command)
                               .endContainer()
                           .endSpec()
                       .endTemplate()
