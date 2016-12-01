@@ -104,7 +104,7 @@ public class KubernetesStep implements StepPlugin, Describable {
         return DESC;
     }
 
-    public void executeStep(PluginStepContext context, java.util.Map<java.lang.String,java.lang.Object> configuration) throws StepException {
+    public void executeStep(PluginStepContext context, Map<String,Object> configuration) throws StepException {
         PluginLogger pluginLogger = context.getLogger();
         Config clientConfiguration = new ConfigBuilder().withWatchReconnectLimit(2).build();
         try (KubernetesClient client = new DefaultKubernetesClient(clientConfiguration)) {
@@ -120,11 +120,17 @@ public class KubernetesStep implements StepPlugin, Describable {
             if(null != configuration.get("activeDeadlineSeconds")){
                 activeDeadlineSeconds = Long.valueOf(configuration.get("activeDeadlineSeconds").toString());
             }
+	    
+	    String _command = configuration.get("command").toString();
+            for (Map.Entry<String, String> option : context.getDataContext().get("option").entrySet()) {
+		_command = _command.replace("${" + option.getKey() + "}", option.getValue());
+            }
             List<String> command = new ArrayList<String>();
-            Matcher commandArguments = Pattern.compile("(\"[^\"]*\"|\\S+)").matcher(configuration.get("command").toString());
+            Matcher commandArguments = Pattern.compile("(\"[^\"]*\"|\\S+)").matcher(_command);
             while (commandArguments.find()) {
 	        command.add(commandArguments.group(1).replace("\"", ""));
             }
+
             Job job = new JobBuilder()
                 .withNewMetadata()
                     .withName(jobName)
