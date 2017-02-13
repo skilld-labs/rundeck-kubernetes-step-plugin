@@ -181,7 +181,7 @@ public class KubernetesStep implements StepPlugin, Describable {
 				List<String> command = new ArrayList<String>();
 				Matcher commandParts = Pattern.compile("(\"(?:.(?!(?<!\\\\)\"))*.?\"|'(?:.(?!(?<!\\\\)'))*.?'|\\S+)").matcher(_command);
 				while (commandParts.find()) {
-					command.add(commandParts.group(1));//.replace("\"", ""));
+					command.add(commandParts.group(1));
 				}
 				container.setCommand(command);
 			}
@@ -193,7 +193,7 @@ public class KubernetesStep implements StepPlugin, Describable {
 				List<String> arguments = new ArrayList<String>();
 				Matcher argumentsParts = Pattern.compile("(\"(?:.(?!(?<!\\\\)\"))*.?\"|'(?:.(?!(?<!\\\\)'))*.?'|\\S+)").matcher(_arguments);
 				while (argumentsParts.find()) {
-					arguments.add(argumentsParts.group(1));//.replace("\"", ""));
+					arguments.add(argumentsParts.group(1));
 				}
 				container.setArgs(arguments);
 			}
