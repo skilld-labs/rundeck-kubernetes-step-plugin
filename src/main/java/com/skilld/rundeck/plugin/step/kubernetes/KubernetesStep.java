@@ -63,6 +63,7 @@ import org.apache.log4j.Logger;
 public class KubernetesStep implements StepPlugin, Describable {
 	static Logger logger = Logger.getLogger(KubernetesStep.class);
 	private Framework framework;
+  
 	public static final String STEP_NAME = "kubernetes-step";
 	public static final String IMAGE = "image";
 	public static final String IMAGE_PULL_SECRETS = "imagePullSecrets";
@@ -79,7 +80,6 @@ public class KubernetesStep implements StepPlugin, Describable {
 	private com.skilld.kubernetes.Job job = null;
 	private	Watch jobWatch = null;
 	private	Watch podWatch = null;
-
 
 	public static enum Reason implements FailureReason {
 		UnexepectedFailure,
@@ -114,14 +114,13 @@ public class KubernetesStep implements StepPlugin, Describable {
 	public void executeStep(PluginStepContext context, Map<String,Object> configuration) throws StepException {
 		PluginLogger pluginLogger = context.getLogger();
 		Config clientConfiguration = new ConfigBuilder().withWatchReconnectLimit(2).build();
-
 		try {
 			client = new DefaultKubernetesClient(clientConfiguration);
 			String jobName = context.getDataContext().get("job").get("name").toString().toLowerCase() + "-" + context.getDataContext().get("job").get("execid");
 			String namespace = configuration.get("namespace").toString();
 			Map<String, String> labels = new HashMap<String, String>();
 			labels.put("job-name", jobName);
-
+      
 			JobConfiguration jobConfiguration = new JobConfiguration();
 			jobConfiguration.setName(jobName);
 			jobConfiguration.setLabels(labels);
