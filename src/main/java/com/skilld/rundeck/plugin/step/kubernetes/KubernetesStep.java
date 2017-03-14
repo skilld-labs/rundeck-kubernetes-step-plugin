@@ -21,6 +21,8 @@
  */
 package com.skilld.rundeck.plugin.step.kubernetes;
 
+import com.skilld.kubernetes.JobConfiguration;
+
 import com.dtolabs.rundeck.core.common.Framework;
 import com.dtolabs.rundeck.core.plugins.Plugin;
 import com.dtolabs.rundeck.core.plugins.configuration.*;
@@ -41,25 +43,16 @@ import io.fabric8.kubernetes.client.KubernetesClientException;
 import io.fabric8.kubernetes.client.Watch;
 import io.fabric8.kubernetes.client.Watcher;
 import static io.fabric8.kubernetes.client.Watcher.Action.ERROR;
-import io.fabric8.kubernetes.api.model.extensions.Job;
-import io.fabric8.kubernetes.api.model.extensions.JobBuilder;
-import io.fabric8.kubernetes.api.model.extensions.JobStatus;
-import io.fabric8.kubernetes.api.model.PodList;
+import io.fabric8.kubernetes.api.model.Job;
 import io.fabric8.kubernetes.api.model.Pod;
-import io.fabric8.kubernetes.api.model.LocalObjectReference;
-import io.fabric8.kubernetes.api.model.Container;
+
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.Map;
+import java.util.HashMap;
+import java.util.Arrays;
 
 import org.apache.log4j.Logger;
-
-import java.io.File;
-import java.io.IOException;
-import java.util.*;
-import java.util.stream.Collectors;
-import java.util.regex.Pattern;
-import java.util.regex.Matcher;
-
 
 /**
  * KubernetesExecutor allow to run kubernetes jobs from rundeck
@@ -70,6 +63,7 @@ import java.util.regex.Matcher;
 public class KubernetesStep implements StepPlugin, Describable {
 	static Logger logger = Logger.getLogger(KubernetesStep.class);
 	private Framework framework;
+  
 	public static final String STEP_NAME = "kubernetes-step";
 	public static final String IMAGE = "image";
 	public static final String IMAGE_PULL_SECRETS = "imagePullSecrets";
@@ -82,8 +76,15 @@ public class KubernetesStep implements StepPlugin, Describable {
 	public static final String COMPLETIONS = "completions";
 	public static final String PARALLELISM = "parallelism";
 
+	private KubernetesClient client = null;
+	private com.skilld.kubernetes.Job job = null;
+	private	Watch jobWatch = null;
+	private	Watch podWatch = null;
+
 	public static enum Reason implements FailureReason {
-		UnexepectedFailure
+		UnexepectedFailure,
+		ExecutionTimeoutFailure,
+		InterruptionFailure
 	}
 
 	public KubernetesStep(final Framework framework) {
@@ -113,105 +114,43 @@ public class KubernetesStep implements StepPlugin, Describable {
 	public void executeStep(PluginStepContext context, Map<String,Object> configuration) throws StepException {
 		PluginLogger pluginLogger = context.getLogger();
 		Config clientConfiguration = new ConfigBuilder().withWatchReconnectLimit(2).build();
-		try (KubernetesClient client = new DefaultKubernetesClient(clientConfiguration)) {
+		try {
+			client = new DefaultKubernetesClient(clientConfiguration);
 			String jobName = context.getDataContext().get("job").get("name").toString().toLowerCase() + "-" + context.getDataContext().get("job").get("execid");
 			String namespace = configuration.get("namespace").toString();
 			Map<String, String> labels = new HashMap<String, String>();
 			labels.put("job-name", jobName);
-
-			JobBuilder jobBuilder = new JobBuilder()
-				.withNewMetadata()
-					.withName(jobName)
-					.withNamespace(namespace)
-				.endMetadata()
-				.withNewSpec()
-					.withNewSelector()
-						.withMatchLabels(labels)
-					.endSelector()
-					.withParallelism(Integer.valueOf(configuration.get("parallelism").toString()))
-					.withCompletions(Integer.valueOf(configuration.get("completions").toString()))
-					.withNewTemplate()
-						.withNewMetadata()
-							.withLabels(labels)
-						.endMetadata()
-						.withNewSpec()
-							.withRestartPolicy(configuration.get("restartPolicy").toString())
-							.addNewContainer()
-								.withName(jobName)
-								.withImage(configuration.get("image").toString())
-							.endContainer()
-						.endSpec()
-					.endTemplate()
-				.endSpec();
-
-			Long activeDeadlineSeconds = null;
-			if(null != configuration.get("activeDeadlineSeconds")){
-				activeDeadlineSeconds = Long.valueOf(configuration.get("activeDeadlineSeconds").toString());
-				jobBuilder
-					.editSpec()
-						.withActiveDeadlineSeconds(activeDeadlineSeconds)
-					.endSpec();
-			}
+      
+			JobConfiguration jobConfiguration = new JobConfiguration();
+			jobConfiguration.setName(jobName);
+			jobConfiguration.setLabels(labels);
+			jobConfiguration.setNamespace((String)configuration.get("namespace"));
+			jobConfiguration.setImage((String)configuration.get("image"));
+			jobConfiguration.setRestartPolicy((String)configuration.get("restartPolicy"));
+			jobConfiguration.setCompletions(Integer.valueOf(configuration.get("completions").toString()));
+			jobConfiguration.setParallelism(Integer.valueOf(configuration.get("parallelism").toString()));
 			if(null != configuration.get("imagePullSecrets")){
-				jobBuilder
-					.editSpec()
-						.editTemplate()
-							.editSpec()
-								.withImagePullSecrets(new LocalObjectReference(configuration.get("imagePullSecrets").toString()))
-							.endSpec()
-						.endTemplate()
-					.endSpec();
+				jobConfiguration.setImagePullSecrets(configuration.get("imagePullSecrets").toString());
 			}
-			if(null != configuration.get("nodeSelector")) {
-				jobBuilder
-					.editSpec()
-						.editTemplate()
-							.editSpec()
-								.withNodeSelector((HashMap<String, String>) Arrays.asList(configuration.get("nodeSelector").toString().split(",")).stream().map(s -> s.split("=")).collect(Collectors.toMap(e -> e[0], e -> e[1])))
-							.endSpec()
-						.endTemplate()
-					.endSpec();
-			}
-			Container container = jobBuilder.getSpec().getTemplate().getSpec().getContainers().get(0);
 			if(null != configuration.get("command")) {
-				String _command = configuration.get("command").toString();
-				for (Map.Entry<String, String> option : context.getDataContext().get("option").entrySet()) {
-					_command = _command.replace("${" + option.getKey() + "}", option.getValue());
-				}
-				List<String> command = new ArrayList<String>();
-				Matcher commandParts = Pattern.compile("(\"(?:.(?!(?<!\\\\)\"))*.?\"|'(?:.(?!(?<!\\\\)'))*.?'|\\S+)").matcher(_command);
-				while (commandParts.find()) {
-					command.add(commandParts.group(1));
-				}
-				container.setCommand(command);
+				jobConfiguration.setCommand(configuration.get("command").toString(), context.getDataContext().get("option"));
 			}
 			if(null != configuration.get("arguments")) {
-				String _arguments = configuration.get("arguments").toString();
-				for (Map.Entry<String, String> option : context.getDataContext().get("option").entrySet()) {
-					_arguments = _arguments.replace("${" + option.getKey() + "}", option.getValue());
-				}
-				List<String> arguments = new ArrayList<String>();
-				Matcher argumentsParts = Pattern.compile("(\"(?:.(?!(?<!\\\\)\"))*.?\"|'(?:.(?!(?<!\\\\)'))*.?'|\\S+)").matcher(_arguments);
-				while (argumentsParts.find()) {
-					arguments.add(argumentsParts.group(1));
-				}
-				container.setArgs(arguments);
+				jobConfiguration.setArguments(configuration.get("arguments").toString(), context.getDataContext().get("option"));
 			}
-			jobBuilder
-				.editSpec()
-					.editTemplate()
-						.editSpec()
-							.withContainers(container)
-						.endSpec()
-					.endTemplate()
-				.endSpec();
+			if(null != configuration.get("nodeSelector")) {
+				jobConfiguration.setNodeSelector(configuration.get("nodeSelector").toString());
+			}
+			if(null != configuration.get("activeDeadlineSeconds")){
+				jobConfiguration.setActiveDeadlineSeconds(Long.valueOf(configuration.get("activeDeadlineSeconds").toString()));
+			}
+			job = new com.skilld.kubernetes.Job(jobConfiguration);
 
 			CountDownLatch jobCloseLatch = new CountDownLatch(1);
 			Watcher jobWatcher = new Watcher<Job>() {
 				@Override
 				public void eventReceived(Action action, Job resource) {
-					if(resource.getStatus().getCompletionTime() != null)
-					{
+					if(job.isComplete(resource)) {
 						jobCloseLatch.countDown();
 					}
 				}
@@ -226,13 +165,14 @@ public class KubernetesStep implements StepPlugin, Describable {
 				@Override
 				public void eventReceived(Action action, Pod resource) {
 					String name = resource.getMetadata().getName();
-					String deletionTimeStamp = resource.getMetadata().getDeletionTimestamp();
-					String phase = resource.getStatus().getPhase();
-					if(phase.equals("Succeeded") && null ==	deletionTimeStamp) {
-						pluginLogger.log(2, name + " : " + client.pods().inNamespace(namespace).withName(name).getLog(true));
+					Integer logLevel = null;
+					if(resource.getStatus().getPhase().equals("Succeeded") && null == resource.getMetadata().getDeletionTimestamp()) {
+						logLevel = 2;
+					} else if (resource.getStatus().getPhase().equals("Failed")) {
+						logLevel = 0;
 					}
-					if(phase.equals("Failed")) {
-						pluginLogger.log(0, name + " : " + client.pods().inNamespace(namespace).withName(name).getLog(true));
+					if (null != logLevel) {
+						pluginLogger.log(logLevel, name + " : " + client.pods().inNamespace(namespace).withName(name).getLog(true));
 					}
 				}
 				@Override
@@ -242,39 +182,37 @@ public class KubernetesStep implements StepPlugin, Describable {
 					}
 				}
 			};
-			try(Watch jobWatch = client.extensions().jobs().inNamespace(namespace).withLabels(labels).watch(jobWatcher)) {
-				try(Watch podWatch = client.pods().inNamespace(namespace).withLabel("job-name", jobName).watch(podWatcher)) {
-					client.extensions().jobs().inNamespace(namespace).withName(jobName).create(jobBuilder.build());
-					if(null != activeDeadlineSeconds) {
-						jobCloseLatch.await(activeDeadlineSeconds, TimeUnit.SECONDS);
-					}
-					else {
-						jobCloseLatch.await();
-					}
-					jobWatch.close();
-					podWatch.close();
-					client.extensions().jobs().inNamespace(namespace).withName(jobName).delete();
-					PodList podList = client.pods().inNamespace(namespace).withLabel("job-name", jobName).list();
-					String name = null;
-					for (Pod pod : podList.getItems()) {
-						name = pod.getMetadata().getName();
-						if(pod.getStatus().getPhase().equals("Pending")) {
-							pluginLogger.log(0, name + " : Timeout");
-						}
-						client.pods().inNamespace(namespace).withName(name).delete();
-					}
-					client.close();
-				} catch (KubernetesClientException | InterruptedException e) {
-					logger.error(e.getMessage(), e);
-					throw new StepException(e.getMessage(), Reason.UnexepectedFailure);
+
+			jobWatch = client.extensions().jobs().inNamespace(namespace).withLabels(labels).watch(jobWatcher);
+			podWatch = client.pods().inNamespace(namespace).withLabel("job-name", jobName).watch(podWatcher);
+			client.extensions().jobs().inNamespace(namespace).withName(jobName).create(job.getJobResource());
+			jobCloseLatch.await();
+			Terminate();
+
+			if(job.hasFailed()){
+				Reason reason = Reason.UnexepectedFailure;
+				if(job.hasTimedout()){
+					reason = Reason.ExecutionTimeoutFailure;
 				}
-			} catch (KubernetesClientException | StepException e) {
-				logger.error(e.getMessage(), e);
-				throw e;
+				throw new StepException(job.getCompletionReason(), reason);
 			}
-		} catch (KubernetesClientException | StepException e) {
+		} catch (KubernetesClientException e) {
 			logger.error(e.getMessage(), e);
 			throw new StepException(e.getMessage(), Reason.UnexepectedFailure);
+		} catch (InterruptedException e) {
+			Terminate();
+			logger.error(e.getMessage(), e);
+			throw new StepException(e.getMessage(), Reason.InterruptionFailure);
+		} catch (StepException e) {
+			logger.error(e.getMessage(), e);
+			throw e;
 		}
+	}
+
+	private void Terminate() {
+		jobWatch.close();
+		podWatch.close();
+		job.delete(client);
+		client.close();
 	}
 }
