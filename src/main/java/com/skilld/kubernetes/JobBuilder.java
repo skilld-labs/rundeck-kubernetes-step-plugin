@@ -26,6 +26,11 @@ import com.skilld.kubernetes.JobConfiguration;
 
 import io.fabric8.kubernetes.api.model.Job;
 import io.fabric8.kubernetes.api.model.Container;
+import io.fabric8.kubernetes.api.model.VolumeMount;
+import io.fabric8.kubernetes.api.model.ResourceRequirementsBuilder;
+
+import java.util.List;
+import java.util.Map;
 
 public class JobBuilder {
 	public static Job build(JobConfiguration configuration) {
@@ -83,12 +88,75 @@ public class JobBuilder {
 		}
 
 		Container container = jobBuilder.buildSpec().getTemplate().getSpec().getContainers().get(0);
+		List<VolumeMount> volumeMountList = container.getVolumeMounts();
 		if(null != configuration.getCommand()) {
 			container.setCommand(configuration.getCommand());
 		}
 		if(null != configuration.getArguments()) {
 			container.setArgs(configuration.getArguments());
 		}
+		Map<String, String> persistentVolumes = configuration.getPersistentVolumes();
+		if(null != persistentVolumes && persistentVolumes.size() > 0) {
+			for(Map.Entry<String, String> entry : persistentVolumes.entrySet()) {
+				volumeMountList.add(
+					new VolumeMount(
+						entry.getValue(),
+						entry.getKey(),
+						Boolean.FALSE,
+						null
+					)
+				);
+
+				jobBuilder
+					.editSpec()
+						.editTemplate()
+							.editSpec()
+								.addNewVolume()
+									.withName(entry.getKey())
+									.withNewPersistentVolumeClaim(entry.getKey(), false)
+								.endVolume()
+							.endSpec()
+						.endTemplate()
+					.endSpec();
+			}
+		}
+		Map<String, String> secrets = configuration.getSecrets();
+		if(null != secrets &&secrets.size() > 0) {
+			for(Map.Entry<String, String> entry : secrets.entrySet()) {
+				volumeMountList.add(
+					new VolumeMount(
+						entry.getValue(),
+						entry.getKey(),
+						Boolean.TRUE,
+						null
+					)
+				);
+
+				jobBuilder
+					.editSpec()
+						.editTemplate()
+							.editSpec()
+								.addNewVolume()
+									.withName(entry.getKey())
+									.withNewSecret()
+										.withSecretName(entry.getKey())
+									.endSecret()
+								.endVolume()
+							.endSpec()
+						.endTemplate()
+					.endSpec();
+			}
+		}
+		container.setVolumeMounts(volumeMountList);
+
+		if(null != configuration.getResourceRequests()) {
+			container.setResources(
+				new ResourceRequirementsBuilder()
+					.withRequests(configuration.getResourceRequests())
+					.build()
+			);
+		}
+
 		jobBuilder
 			.editSpec()
 				.editTemplate()
