@@ -22,6 +22,7 @@
 package com.skilld.kubernetes;
 
 import io.fabric8.kubernetes.api.model.LocalObjectReference;
+import io.fabric8.kubernetes.api.model.Quantity;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Arrays;
@@ -45,6 +46,9 @@ public class JobConfiguration {
 	private Map<String, String> nodeSelector;
 	private Integer parallelism;
 	private Map<String, String> labels;
+	private Map<String, String> persistentVolumes = new HashMap<String, String>();
+	private Map<String, String> secrets = new HashMap<String, String>();
+	private Map<String, Quantity> resourceRequests;
 
 	/* Getters */
 	public String getName() {
@@ -95,6 +99,12 @@ public class JobConfiguration {
 		return labels;
 	}
 
+	public Map<String, String> getPersistentVolumes() { return persistentVolumes; }
+
+	public Map<String, String> getSecrets() { return secrets; }
+
+	public Map<String, Quantity> getResourceRequests() { return resourceRequests; }
+
 	/* Setters */
 	public void setName(String _name) {
 		name = _name;
@@ -144,12 +154,28 @@ public class JobConfiguration {
 		labels = _labels;
 	}
 
-	private List<String> buildInput(String _input, Map<String,String> _options){
+	public void setPersistentVolume(String _persistentVolumeName, String _persistentVolumeMountPath, Map<String, String> _options) {
+		persistentVolumes.put(buildOption(_persistentVolumeName, _options), buildOption(_persistentVolumeMountPath, _options));
+	}
+
+	public void setSecret(String _secretName, String _secretMountPath, Map<String, String> _options) {
+		secrets.put(buildOption(_secretName, _options), buildOption(_secretMountPath, _options));
+	}
+
+	public void setResourceRequests(Map<String, Quantity> reqMap) {
+		resourceRequests = reqMap;
+	}
+
+	private String buildOption(String _input, Map<String, String> _options) {
 		for (Map.Entry<String, String> option : _options.entrySet()){
 			_input = _input.replace("${" + option.getKey() + "}", option.getValue());
 		}
+		return _input;
+	}
+
+	private List<String> buildInput(String _input, Map<String,String> _options){
 		List<String> input = new ArrayList<String>();
-		Matcher inputParts = Pattern.compile("(\"(?:.(?!(?<!\\\\)\"))*.?\"|'(?:.(?!(?<!\\\\)'))*.?'|\\S+)").matcher(_input);
+		Matcher inputParts = Pattern.compile("(\"(?:.(?!(?<!\\\\)\"))*.?\"|'(?:.(?!(?<!\\\\)'))*.?'|\\S+)").matcher(buildOption(_input, _options));
 		while(inputParts.find()) {
 			input.add(inputParts.group(1));
 		}

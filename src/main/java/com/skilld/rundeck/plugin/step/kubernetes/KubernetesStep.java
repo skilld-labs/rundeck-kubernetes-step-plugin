@@ -35,6 +35,7 @@ import com.dtolabs.rundeck.core.execution.workflow.steps.StepException;
 import com.dtolabs.rundeck.plugins.step.PluginStepContext;
 import com.dtolabs.rundeck.plugins.PluginLogger;
 
+import io.fabric8.kubernetes.api.model.Quantity;
 import io.fabric8.kubernetes.client.Config;
 import io.fabric8.kubernetes.client.ConfigBuilder;
 import io.fabric8.kubernetes.client.DefaultKubernetesClient;
@@ -63,8 +64,11 @@ import org.apache.log4j.Logger;
 public class KubernetesStep implements StepPlugin, Describable {
 	static Logger logger = Logger.getLogger(KubernetesStep.class);
 	private Framework framework;
-  
+
 	public static final String STEP_NAME = "kubernetes-step";
+	public static final String KUBE_MASTER = "kubeMaster";
+	public static final String KUBE_TOKEN = "kubeToken";
+	public static final String KUBE_SSL = "kubeSSL";
 	public static final String IMAGE = "image";
 	public static final String IMAGE_PULL_SECRETS = "imagePullSecrets";
 	public static final String COMMAND = "command";
@@ -75,6 +79,10 @@ public class KubernetesStep implements StepPlugin, Describable {
 	public static final String RESTART_POLICY = "restartPolicy";
 	public static final String COMPLETIONS = "completions";
 	public static final String PARALLELISM = "parallelism";
+	public static final String PERSISTENT_VOLUME = "persistentVolume";
+	public static final String SECRET = "secret";
+	public static final String RESOURCE_REQUESTS = "resourceRequests";
+	public static final String CLEAN_UP = "cleanUp";
 
 	private KubernetesClient client = null;
 	private com.skilld.kubernetes.Job job = null;
@@ -95,6 +103,9 @@ public class KubernetesStep implements StepPlugin, Describable {
 		.name(STEP_NAME)
 		.title("Kubernetes")
 		.description("Runs a Kubernetes job")
+		.property(PropertyUtil.string(KUBE_MASTER, "Kubernetes URL", "The URL of the Kubernetes master, empty for local cluster", false, null))
+		.property(PropertyUtil.string(KUBE_TOKEN, "Kubernetes Token", "The Service Token to use for Kubernetes, empty for local token", false, null))
+		.property(PropertyUtil.bool(KUBE_SSL, "Kubernetes SSL Validate", "Validate the Kubernetes SSL server certificate", false, "true"))
 		.property(PropertyUtil.string(IMAGE, "Image", "The container image to use", true, null))
 		.property(PropertyUtil.string(IMAGE_PULL_SECRETS, "ImagePullSecrets", "The image pull secrets name", false, null))
 		.property(PropertyUtil.string(COMMAND, "Command", "The command to run in the container", false, null))
@@ -105,6 +116,10 @@ public class KubernetesStep implements StepPlugin, Describable {
 		.property(PropertyUtil.select(RESTART_POLICY, "Restart policy", "The restart policy to apply to the job", true, "Never", Arrays.asList("Never", "OnFailure")))
 		.property(PropertyUtil.integer(COMPLETIONS, "Completions", "Number of pods to wait for success exit before considering the job complete", true, "1"))
 		.property(PropertyUtil.integer(PARALLELISM, "Parallelism", "Number of pods running at any instant", true, "1"))
+		.property(PropertyUtil.string(PERSISTENT_VOLUME, "Persistent Volume", "The name of the PVC to use in this job in format <name>;<mountpath>", false, null))
+		.property(PropertyUtil.string(SECRET, "Secret", "The name of the kubernetes secret in format <name>;<mountpath>", false, null))
+		.property(PropertyUtil.string(RESOURCE_REQUESTS, "Resource Requests", "Request resources in format cpu:4 memory:24Gi", false, null))
+		.property(PropertyUtil.bool(CLEAN_UP, "Cleanup", "Remove finished jobs from Kubernetes", true, "true"))
 		.build();
 
 	public Description getDescription() {
@@ -113,36 +128,80 @@ public class KubernetesStep implements StepPlugin, Describable {
 
 	public void executeStep(PluginStepContext context, Map<String,Object> configuration) throws StepException {
 		PluginLogger pluginLogger = context.getLogger();
-		Config clientConfiguration = new ConfigBuilder().withWatchReconnectLimit(2).build();
+		ConfigBuilder clientConfigurationBuilder = new ConfigBuilder().withWatchReconnectInterval(30).withWatchReconnectLimit(0);
+
+		if(null != configuration.get(KUBE_MASTER)) {
+			clientConfigurationBuilder.withMasterUrl(configuration.get(KUBE_MASTER).toString());
+		}
+		if(null != configuration.get(KUBE_TOKEN)) {
+			clientConfigurationBuilder.withOauthToken(configuration.get(KUBE_TOKEN).toString());
+		}
+		if(null != configuration.get(KUBE_SSL)) {
+			clientConfigurationBuilder.withTrustCerts(!"true".equals(configuration.get(KUBE_SSL).toString()));
+		}
+
+		Config clientConfiguration = clientConfigurationBuilder.build();
+		boolean cleanup = "true".equals(configuration.get(CLEAN_UP).toString());
 		try {
 			client = new DefaultKubernetesClient(clientConfiguration);
 			String jobName = context.getDataContext().get("job").get("name").toString().toLowerCase() + "-" + context.getDataContext().get("job").get("execid");
-			String namespace = configuration.get("namespace").toString();
+			String namespace = configuration.get(NAMESPACE).toString();
 			Map<String, String> labels = new HashMap<String, String>();
 			labels.put("job-name", jobName);
-      
+
 			JobConfiguration jobConfiguration = new JobConfiguration();
 			jobConfiguration.setName(jobName);
 			jobConfiguration.setLabels(labels);
-			jobConfiguration.setNamespace((String)configuration.get("namespace"));
-			jobConfiguration.setImage((String)configuration.get("image"));
-			jobConfiguration.setRestartPolicy((String)configuration.get("restartPolicy"));
-			jobConfiguration.setCompletions(Integer.valueOf(configuration.get("completions").toString()));
-			jobConfiguration.setParallelism(Integer.valueOf(configuration.get("parallelism").toString()));
-			if(null != configuration.get("imagePullSecrets")){
-				jobConfiguration.setImagePullSecrets(configuration.get("imagePullSecrets").toString());
+			jobConfiguration.setNamespace((String)configuration.get(NAMESPACE));
+			jobConfiguration.setImage((String)configuration.get(IMAGE));
+			jobConfiguration.setRestartPolicy((String)configuration.get(RESTART_POLICY));
+			jobConfiguration.setCompletions(Integer.valueOf(configuration.get(COMPLETIONS).toString()));
+			jobConfiguration.setParallelism(Integer.valueOf(configuration.get(PARALLELISM).toString()));
+			if(null != configuration.get(IMAGE_PULL_SECRETS)){
+				jobConfiguration.setImagePullSecrets(configuration.get(IMAGE_PULL_SECRETS).toString());
 			}
-			if(null != configuration.get("command")) {
-				jobConfiguration.setCommand(configuration.get("command").toString(), context.getDataContext().get("option"));
+			if(null != configuration.get(COMMAND)) {
+				jobConfiguration.setCommand(configuration.get(COMMAND).toString(), context.getDataContext().get("option"));
 			}
-			if(null != configuration.get("arguments")) {
-				jobConfiguration.setArguments(configuration.get("arguments").toString(), context.getDataContext().get("option"));
+			if(null != configuration.get(ARGUMENTS)) {
+				jobConfiguration.setArguments(configuration.get(ARGUMENTS).toString(), context.getDataContext().get("option"));
 			}
-			if(null != configuration.get("nodeSelector")) {
-				jobConfiguration.setNodeSelector(configuration.get("nodeSelector").toString());
+			if(null != configuration.get(NODE_SELECTOR)) {
+				jobConfiguration.setNodeSelector(configuration.get(NODE_SELECTOR).toString());
 			}
-			if(null != configuration.get("activeDeadlineSeconds")){
-				jobConfiguration.setActiveDeadlineSeconds(Long.valueOf(configuration.get("activeDeadlineSeconds").toString()));
+			if(null != configuration.get(ACTIVE_DEADLINE)){
+				jobConfiguration.setActiveDeadlineSeconds(Long.valueOf(configuration.get(ACTIVE_DEADLINE).toString()));
+			}
+			if(null != configuration.get(PERSISTENT_VOLUME)) {
+				try {
+					String persistentVolumeArray[] = configuration.get(PERSISTENT_VOLUME).toString().split("\\s*;\\s*");
+					jobConfiguration.setPersistentVolume(persistentVolumeArray[0], persistentVolumeArray[1], context.getDataContext().get("option"));
+				}
+				catch (ArrayIndexOutOfBoundsException e) {
+					logger.error("Invalid format for " + PERSISTENT_VOLUME, e);
+				}
+			}
+			if(null != configuration.get(SECRET)) {
+				try {
+					String secretVolumeArray[] = configuration.get(SECRET).toString().split("\\s*;\\s*");
+					jobConfiguration.setSecret(secretVolumeArray[0], secretVolumeArray[1], context.getDataContext().get("option"));
+				}
+				catch (ArrayIndexOutOfBoundsException e) {
+					logger.error("Invalid format for " + SECRET, e);
+				}
+			}
+			if(null != configuration.get(RESOURCE_REQUESTS) && !"".equals(configuration.get(RESOURCE_REQUESTS).toString())) {
+				try {
+					Map<String, Quantity> reqMap = new HashMap<>();
+					for (String resourceRequest: configuration.get(RESOURCE_REQUESTS).toString().split(" ")) {
+						String resourceRequestArray[] = resourceRequest.split(":");
+						reqMap.put(resourceRequestArray[0], new Quantity(resourceRequestArray[1]));
+					}
+					jobConfiguration.setResourceRequests(reqMap);
+				}
+				catch (ArrayIndexOutOfBoundsException e) {
+					logger.error("Invalid format for " + RESOURCE_REQUESTS, e);
+				}
 			}
 			job = new com.skilld.kubernetes.Job(jobConfiguration);
 
@@ -187,7 +246,7 @@ public class KubernetesStep implements StepPlugin, Describable {
 			podWatch = client.pods().inNamespace(namespace).withLabel("job-name", jobName).watch(podWatcher);
 			client.extensions().jobs().inNamespace(namespace).withName(jobName).create(job.getJobResource());
 			jobCloseLatch.await();
-			Terminate();
+			Terminate(cleanup);
 
 			if(job.hasFailed()){
 				Reason reason = Reason.UnexepectedFailure;
@@ -200,7 +259,7 @@ public class KubernetesStep implements StepPlugin, Describable {
 			logger.error(e.getMessage(), e);
 			throw new StepException(e.getMessage(), Reason.UnexepectedFailure);
 		} catch (InterruptedException e) {
-			Terminate();
+			Terminate(cleanup);
 			logger.error(e.getMessage(), e);
 			throw new StepException(e.getMessage(), Reason.InterruptionFailure);
 		} catch (StepException e) {
@@ -209,10 +268,12 @@ public class KubernetesStep implements StepPlugin, Describable {
 		}
 	}
 
-	private void Terminate() {
+	private void Terminate(boolean cleanup) {
 		jobWatch.close();
 		podWatch.close();
-		job.delete(client);
+		if (cleanup) {
+			job.delete(client);
+		}
 		client.close();
 	}
 }
