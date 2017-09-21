@@ -50,8 +50,8 @@ repositories {
 }
 
 dependencies {
-    compile group: 'org.rundeck', name: 'rundeck-core', version: '2.7.2'
-    pluginLibs group: 'io.fabric8', name: 'kubernetes-client', version: '2.2.4'
+    compile group: 'org.rundeck', name: 'rundeck-core', version: '2.9.3'
+    pluginLibs group: 'io.fabric8', name: 'kubernetes-client', version: '2.6.3'
 }
 
 // task to copy plugin libs to output/lib dir
@@ -77,7 +77,7 @@ jar {
 jar.dependsOn(copyToLib)
 
 task wrapper(type: Wrapper) {
-    gradleVersion = '2.7'
+    gradleVersion = '4.2'
 }
 
 allprojects {

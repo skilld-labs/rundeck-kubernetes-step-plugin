@@ -144,7 +144,7 @@ public class KubernetesStep implements StepPlugin, Describable {
 		boolean cleanup = "true".equals(configuration.get(CLEAN_UP).toString());
 		try {
 			client = new DefaultKubernetesClient(clientConfiguration);
-			String jobName = context.getDataContext().get("job").get("name").toString().toLowerCase() + "-" + context.getDataContext().get("job").get("execid");
+			String jobName = context.getDataContextObject().get("job").get("name").toString().toLowerCase() + "-" + context.getDataContextObject().get("job").get("execid");
 			String namespace = configuration.get(NAMESPACE).toString();
 			Map<String, String> labels = new HashMap<String, String>();
 			labels.put("job-name", jobName);
@@ -161,10 +161,10 @@ public class KubernetesStep implements StepPlugin, Describable {
 				jobConfiguration.setImagePullSecrets(configuration.get(IMAGE_PULL_SECRETS).toString());
 			}
 			if(null != configuration.get(COMMAND)) {
-				jobConfiguration.setCommand(configuration.get(COMMAND).toString(), context.getDataContext().get("option"));
+				jobConfiguration.setCommand(configuration.get(COMMAND).toString(), context.getDataContextObject().get("option"));
 			}
 			if(null != configuration.get(ARGUMENTS)) {
-				jobConfiguration.setArguments(configuration.get(ARGUMENTS).toString(), context.getDataContext().get("option"));
+				jobConfiguration.setArguments(configuration.get(ARGUMENTS).toString(), context.getDataContextObject().get("option"));
 			}
 			if(null != configuration.get(NODE_SELECTOR)) {
 				jobConfiguration.setNodeSelector(configuration.get(NODE_SELECTOR).toString());
@@ -175,7 +175,7 @@ public class KubernetesStep implements StepPlugin, Describable {
 			if(null != configuration.get(PERSISTENT_VOLUME)) {
 				try {
 					String persistentVolumeArray[] = configuration.get(PERSISTENT_VOLUME).toString().split("\\s*;\\s*");
-					jobConfiguration.setPersistentVolume(persistentVolumeArray[0], persistentVolumeArray[1], context.getDataContext().get("option"));
+					jobConfiguration.setPersistentVolume(persistentVolumeArray[0], persistentVolumeArray[1], context.getDataContextObject().get("option"));
 				}
 				catch (ArrayIndexOutOfBoundsException e) {
 					logger.error("Invalid format for " + PERSISTENT_VOLUME, e);
@@ -184,7 +184,7 @@ public class KubernetesStep implements StepPlugin, Describable {
 			if(null != configuration.get(SECRET)) {
 				try {
 					String secretVolumeArray[] = configuration.get(SECRET).toString().split("\\s*;\\s*");
-					jobConfiguration.setSecret(secretVolumeArray[0], secretVolumeArray[1], context.getDataContext().get("option"));
+					jobConfiguration.setSecret(secretVolumeArray[0], secretVolumeArray[1], context.getDataContextObject().get("option"));
 				}
 				catch (ArrayIndexOutOfBoundsException e) {
 					logger.error("Invalid format for " + SECRET, e);
@@ -206,7 +206,7 @@ public class KubernetesStep implements StepPlugin, Describable {
 			job = new com.skilld.kubernetes.Job(jobConfiguration);
 
 			CountDownLatch jobCloseLatch = new CountDownLatch(1);
-			Watcher jobWatcher = new Watcher<Job>() {
+			Watcher<Job> jobWatcher = new Watcher<Job>() {
 				@Override
 				public void eventReceived(Action action, Job resource) {
 					if(job.isComplete(resource)) {
@@ -220,7 +220,7 @@ public class KubernetesStep implements StepPlugin, Describable {
 					}
 				}
 			};
-			Watcher podWatcher = new Watcher<Pod>() {
+			Watcher<Pod> podWatcher = new Watcher<Pod>() {
 				@Override
 				public void eventReceived(Action action, Pod resource) {
 					String name = resource.getMetadata().getName();
