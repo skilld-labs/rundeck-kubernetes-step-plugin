@@ -21,20 +21,22 @@
  */
 package com.skilld.rundeck.plugin.step.kubernetes;
 
-import com.skilld.kubernetes.JobConfiguration;
-
 import com.dtolabs.rundeck.core.common.Framework;
-import com.dtolabs.rundeck.core.plugins.Plugin;
-import com.dtolabs.rundeck.core.plugins.configuration.*;
-import com.dtolabs.rundeck.plugins.descriptions.PluginDescription;
-import com.dtolabs.rundeck.plugins.util.DescriptionBuilder;
-import com.dtolabs.rundeck.plugins.util.PropertyBuilder;
-import com.dtolabs.rundeck.plugins.step.StepPlugin;
 import com.dtolabs.rundeck.core.execution.workflow.steps.FailureReason;
 import com.dtolabs.rundeck.core.execution.workflow.steps.StepException;
-import com.dtolabs.rundeck.plugins.step.PluginStepContext;
+import com.dtolabs.rundeck.core.plugins.Plugin;
+import com.dtolabs.rundeck.core.plugins.configuration.Describable;
+import com.dtolabs.rundeck.core.plugins.configuration.Description;
+import com.dtolabs.rundeck.core.plugins.configuration.PropertyUtil;
 import com.dtolabs.rundeck.plugins.PluginLogger;
-
+import com.dtolabs.rundeck.plugins.descriptions.PluginDescription;
+import com.dtolabs.rundeck.plugins.step.PluginStepContext;
+import com.dtolabs.rundeck.plugins.step.StepPlugin;
+import com.dtolabs.rundeck.plugins.util.DescriptionBuilder;
+import com.google.common.annotations.VisibleForTesting;
+import com.skilld.kubernetes.JobConfiguration;
+import io.fabric8.kubernetes.api.model.Job;
+import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.Quantity;
 import io.fabric8.kubernetes.client.Config;
 import io.fabric8.kubernetes.client.ConfigBuilder;
@@ -43,17 +45,16 @@ import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientException;
 import io.fabric8.kubernetes.client.Watch;
 import io.fabric8.kubernetes.client.Watcher;
-import static io.fabric8.kubernetes.client.Watcher.Action.ERROR;
-import io.fabric8.kubernetes.api.model.Job;
-import io.fabric8.kubernetes.api.model.Pod;
-
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.Map;
-import java.util.HashMap;
-import java.util.Arrays;
-
 import org.apache.log4j.Logger;
+
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.function.Predicate;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * KubernetesExecutor allow to run kubernetes jobs from rundeck
@@ -83,6 +84,10 @@ public class KubernetesStep implements StepPlugin, Describable {
 	public static final String SECRET = "secret";
 	public static final String RESOURCE_REQUESTS = "resourceRequests";
 	public static final String CLEAN_UP = "cleanUp";
+	public static final String LABELS = "labels";
+
+	private static final String LABELSEPARATOR = " ";
+	private static final String LABELKVSEPARATOR = "=";
 
 	private KubernetesClient client = null;
 	private com.skilld.kubernetes.Job job = null;
@@ -119,6 +124,8 @@ public class KubernetesStep implements StepPlugin, Describable {
 		.property(PropertyUtil.string(PERSISTENT_VOLUME, "Persistent Volume", "The name of the PVC to use in this job in format <name>;<mountpath>", false, null))
 		.property(PropertyUtil.string(SECRET, "Secret", "The name of the kubernetes secret in format <name>;<mountpath>", false, null))
 		.property(PropertyUtil.string(RESOURCE_REQUESTS, "Resource Requests", "Request resources in format cpu:4 memory:24Gi", false, null))
+        .property(PropertyUtil.string(LABELS, "Labels", "The labels to set on the jobs. Labels are separated by a single space, keys and values by a '='. Example: 'foo=bar a=b'. "
+                + "See https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#syntax-and-character-set for information on key and value formatting.",false, ""))
 		.property(PropertyUtil.bool(CLEAN_UP, "Cleanup", "Remove finished jobs from Kubernetes", true, "true"))
 		.build();
 
@@ -146,8 +153,28 @@ public class KubernetesStep implements StepPlugin, Describable {
 			client = new DefaultKubernetesClient(clientConfiguration);
 			String jobName = context.getDataContextObject().get("job").get("name").toString().toLowerCase() + "-" + context.getDataContextObject().get("job").get("execid");
 			String namespace = configuration.get(NAMESPACE).toString();
-			Map<String, String> labels = new HashMap<String, String>();
-			labels.put("job-name", jobName);
+
+			// add the job-name label in addition to the labels set in the job configuration
+			final StringBuilder labelBuilder = new StringBuilder("job-name" + LABELKVSEPARATOR + jobName);
+			if (configuration.containsKey(LABELS)) {
+			    final String configuredLabels = configuration.get(LABELS).toString();
+			    if (!configuredLabels.isEmpty()) {
+					labelBuilder
+							.append(LABELSEPARATOR)
+							.append(configuration.get(LABELS).toString());
+				}
+			}
+			final String labelsWithJobName = labelBuilder.toString();
+			List<String> labelsUnvalidated = Arrays.asList(labelsWithJobName.split(LABELSEPARATOR));
+			// make sure there is not a single label that doesn't validate
+			if (!labelsUnvalidated.stream().allMatch(label -> validateLabel(LABELKVSEPARATOR, label))) {
+				throw new StepException("Invalid label contained in \"" + labelsUnvalidated + "\"", Reason.UnexepectedFailure);
+			}
+			// now we know that all labels are valid, transform them to a map
+			final Map<String, String> labels = Arrays.asList(labelsWithJobName.split(LABELSEPARATOR))
+					.stream()
+					.map(keyVal -> keyVal.split(LABELKVSEPARATOR))
+					.collect(Collectors.toMap(keyVal -> keyVal[0], keyVal -> keyVal[1]));
 
 			JobConfiguration jobConfiguration = new JobConfiguration();
 			jobConfiguration.setName(jobName);
@@ -275,5 +302,79 @@ public class KubernetesStep implements StepPlugin, Describable {
 			job.delete(client);
 		}
 		client.close();
+	}
+
+	/**
+	 * Validate a given label according to Kubernetes' label specification.
+	 * The specification separates three label components:
+	 * - the key, which in turn can consist of an optional prefix and a name
+	 * - the value
+	 *
+	 * The prefix can be at most 253 characters and should be formatted as a DNS name.
+	 * The name can be at most 63 characters and should start and end with an alphanumeric character and can contain
+	 * alphanumeric or any of "-_.".
+	 * The value validates the same as the name, but can be an empty string as well.
+	 *
+	 * For more information see https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#syntax-and-character-set
+	 * @param separator The string (usually a single character) separating the key from the value.
+	 * @param keyValue The key-value pair to validate.
+	 * @return True if {@code keyValue} validates, false if not.
+	 */
+	@VisibleForTesting
+	protected static boolean validateLabel(String separator, String keyValue) {
+		final String keyPrefixSeparator = "/";
+	    final Predicate<String> isValidKeyName = Pattern.compile("^[a-zA-Z0-9]([-_.]?[a-zA-Z0-9]+)*$")
+				.asPredicate()
+				.and(prefix -> prefix.length() <= 63);
+	    final Predicate<String> isValidKeyPrefix = Pattern.compile("^[a-zA-Z0-9]+(\\.[a-zA-Z0-9]+)*$")
+				.asPredicate()
+				.and(prefix -> prefix.length() <= 253);
+	    final Predicate<String> isValidValue = isValidKeyName.or(""::equals);
+
+	    // the separator may not be null or empty
+		if (separator == null || separator.isEmpty()) {
+			return false;
+		}
+
+		// the keyValue may not be null and should always contain at least a name and a separator, which in its shorted
+		// form is "a="
+		if (keyValue == null || keyValue.length() < 2) {
+			return false;
+		}
+
+	    // a label cannot start with the separator, but it may end with it in case the value is empty
+		if (keyValue.startsWith(separator)) {
+			return false;
+		}
+
+	    // either keyvalue is of form "foo=bar", or "foo=" which will result in an array of 2 or 1 respectively
+		// when split on "=" (assuming that's the separator used)
+		final String[] kv = keyValue.split(separator);
+		if (kv.length < 1 || kv.length > 2) {
+			return false;
+		}
+
+		final String key = kv[0];
+		// a value may be empty, so if we were given a label of form "foo=", set the value to an empty string
+		final String val = kv.length == 2 ? kv[1] : "";
+
+		// first make sure the key doesn't begin or end with a /
+		if (key.startsWith(keyPrefixSeparator) || key.endsWith(keyPrefixSeparator)) {
+			return false;
+		}
+		// split the key on /
+		final String[] keySplitOnPrefix = key.split(keyPrefixSeparator);
+		final boolean validKey;
+		if (keySplitOnPrefix.length == 1) {
+			// key doesn't contain a prefix
+			validKey = isValidKeyName.test(keySplitOnPrefix[0]);
+		} else if (keySplitOnPrefix.length == 2) {
+			validKey = isValidKeyPrefix.test(keySplitOnPrefix[0]) &&
+					isValidKeyName.test(keySplitOnPrefix[1]);
+		} else {
+			validKey = false;
+		}
+
+		return validKey && isValidValue.test(val);
 	}
 }
