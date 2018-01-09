@@ -125,7 +125,7 @@ public class KubernetesStep implements StepPlugin, Describable {
 		.property(PropertyUtil.string(SECRET, "Secret", "The name of the kubernetes secret in format <name>;<mountpath>", false, null))
 		.property(PropertyUtil.string(RESOURCE_REQUESTS, "Resource Requests", "Request resources in format cpu:4 memory:24Gi", false, null))
         .property(PropertyUtil.string(LABELS, "Labels", "The labels to set on the jobs. Labels are separated by '" + LABELSEPARATOR + "', keys and values by a '" + LABELKVSEPARATOR + "'. "
-				+ "Example: 'foo" + LABELKVSEPARATOR + "bar" + LABELKVSEPARATOR + "a" + LABELSEPARATOR + "b'. See https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#syntax-and-character-set for "
+				+ "Example: 'foo" + LABELKVSEPARATOR + "bar" + LABELSEPARATOR + "a" + LABELKVSEPARATOR + "b'. See https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#syntax-and-character-set for "
 				+ "information on key and value formatting.",false, ""))
 		.property(PropertyUtil.bool(CLEAN_UP, "Cleanup", "Remove finished jobs from Kubernetes", true, "true"))
 		.build();
