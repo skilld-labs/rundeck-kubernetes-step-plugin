@@ -124,8 +124,9 @@ public class KubernetesStep implements StepPlugin, Describable {
 		.property(PropertyUtil.string(PERSISTENT_VOLUME, "Persistent Volume", "The name of the PVC to use in this job in format <name>;<mountpath>", false, null))
 		.property(PropertyUtil.string(SECRET, "Secret", "The name of the kubernetes secret in format <name>;<mountpath>", false, null))
 		.property(PropertyUtil.string(RESOURCE_REQUESTS, "Resource Requests", "Request resources in format cpu:4 memory:24Gi", false, null))
-        .property(PropertyUtil.string(LABELS, "Labels", "The labels to set on the jobs. Labels are separated by a single space, keys and values by a '='. Example: 'foo=bar a=b'. "
-                + "See https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#syntax-and-character-set for information on key and value formatting.",false, ""))
+        .property(PropertyUtil.string(LABELS, "Labels", "The labels to set on the jobs. Labels are separated by '" + LABELSEPARATOR + "', keys and values by a '" + LABELKVSEPARATOR + "'. "
+				+ "Example: 'foo" + LABELKVSEPARATOR + "bar" + LABELKVSEPARATOR + "a" + LABELSEPARATOR + "b'. See https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#syntax-and-character-set for "
+				+ "information on key and value formatting.",false, ""))
 		.property(PropertyUtil.bool(CLEAN_UP, "Cleanup", "Remove finished jobs from Kubernetes", true, "true"))
 		.build();
 
@@ -164,17 +165,8 @@ public class KubernetesStep implements StepPlugin, Describable {
 							.append(configuration.get(LABELS).toString());
 				}
 			}
-			final String labelsWithJobName = labelBuilder.toString();
-			List<String> labelsUnvalidated = Arrays.asList(labelsWithJobName.split(LABELSEPARATOR));
-			// make sure there is not a single label that doesn't validate
-			if (!labelsUnvalidated.stream().allMatch(label -> validateLabel(LABELKVSEPARATOR, label))) {
-				throw new StepException("Invalid label contained in \"" + labelsUnvalidated + "\"", Reason.UnexepectedFailure);
-			}
-			// now we know that all labels are valid, transform them to a map
-			final Map<String, String> labels = Arrays.asList(labelsWithJobName.split(LABELSEPARATOR))
-					.stream()
-					.map(keyVal -> keyVal.split(LABELKVSEPARATOR))
-					.collect(Collectors.toMap(keyVal -> keyVal[0], keyVal -> keyVal[1]));
+			// validate and get the labels
+			final Map<String, String> labels = validateAndGetLabels(LABELKVSEPARATOR, LABELSEPARATOR, labelBuilder.toString());
 
 			JobConfiguration jobConfiguration = new JobConfiguration();
 			jobConfiguration.setName(jobName);
@@ -316,7 +308,8 @@ public class KubernetesStep implements StepPlugin, Describable {
 	 * The value validates the same as the name, but can be an empty string as well.
 	 *
 	 * For more information see https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#syntax-and-character-set
-	 * @param separator The string (usually a single character) separating the key from the value.
+	 * @param separator The string (usually a single character) separating the key from the value. N.B.: There are no checks to make sure
+	 * you don't separate on a character which will break validation, like "c" which will break because keys and values may contain "c" as well.
 	 * @param keyValue The key-value pair to validate.
 	 * @return True if {@code keyValue} validates, false if not.
 	 */
@@ -376,5 +369,27 @@ public class KubernetesStep implements StepPlugin, Describable {
 		}
 
 		return validKey && isValidValue.test(val);
+	}
+
+	/**
+	 * Given a string, split it on {@code labelSeparator} and validate every substring according to {@link KubernetesStep#validateLabel(String, String)}.
+	 * @param kvSeparator The string used to split a label to the key and the value.
+	 * @param labelSeparator The string used to split occurrences of labels.
+	 * @param labels The string that contains the label(s).
+	 * @return A map containing the label-keys as keys and the label-values as values.
+	 * @throws StepException Thrown when we can't validate one or more of the labels.
+	 */
+	@VisibleForTesting
+	protected static Map<String, String> validateAndGetLabels(String kvSeparator, String labelSeparator, String labels) throws StepException {
+		List<String> labelsUnvalidated = Arrays.asList(labels.split(labelSeparator));
+		// make sure there is not a single label that doesn't validate
+		if (!labelsUnvalidated.stream().allMatch(label -> validateLabel(kvSeparator, label))) {
+			throw new StepException("Invalid label contained in \"" + labelsUnvalidated + "\"", Reason.UnexepectedFailure);
+		}
+		// now we know that all labels are valid, transform them to a map and return them
+		return Arrays.asList(labels.split(labelSeparator))
+				.stream()
+				.map(keyVal -> keyVal.split(kvSeparator))
+				.collect(Collectors.toMap(keyVal -> keyVal[0], keyVal -> keyVal.length == 2 ? keyVal[1] : ""));
 	}
 }

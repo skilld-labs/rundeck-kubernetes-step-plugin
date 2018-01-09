@@ -1,9 +1,14 @@
 package com.skilld.rundeck.plugin.step.kubernetes;
 
+import com.dtolabs.rundeck.core.execution.workflow.steps.StepException;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.ExpectedException;
 
 import java.util.Arrays;
 import java.util.Map;
+import java.util.Properties;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -11,40 +16,43 @@ import static org.junit.Assert.*;
 
 public class KubernetesStepTest {
 
-    private static final String SEPARATOR = "=";
+    @Rule
+    public final ExpectedException exception = ExpectedException.none();
+
+    private static final String KVSEPARATOR = "=";
+    private static final String SEPARATOR = " ";
+
+    private static final Function<String, Boolean> testwithSeparator =
+            label -> KubernetesStep.validateLabel(KVSEPARATOR, label);
+
+    // Validate single labels
     @Test
     public void validateLabel() {
         // make sure both separator and keyValue cannot be null or empty
         assertFalse(KubernetesStep.validateLabel(null, "foo=bar"));
         assertFalse(KubernetesStep.validateLabel("", "foo=bar"));
-        assertFalse(KubernetesStep.validateLabel(SEPARATOR, null));
-        assertFalse(KubernetesStep.validateLabel(SEPARATOR, ""));
+        assertFalse(KubernetesStep.validateLabel(KVSEPARATOR, null));
+        assertFalse(KubernetesStep.validateLabel(KVSEPARATOR, ""));
 
         // test some valid cases
-        Arrays.asList(
-                "kubernetes.io/foo=bar",
-                "k.uber.netes.io/F_o-0=b.a-r",
-                "foo=bar",
-                "a="
-        ).stream()
-                .forEach(label -> assertTrue(KubernetesStep.validateLabel(SEPARATOR, label)));
+        assertTrue(testwithSeparator.apply("kubernetes.io/foo=bar"));
+        assertTrue(testwithSeparator.apply("k.uber.netes.io/F_o-0=b.a-r"));
+        assertTrue(testwithSeparator.apply("foo=bar"));
+        assertTrue(testwithSeparator.apply("a="));
 
         // test some invalid cases
-        Arrays.asList(
-                "=a",
-                "/foo=bar",
-                "foo/=bar",
-                "kubernetes-io/foo=bar",
-                "kubernetes io/foo=bar",
-                "kubernetes.io/foo=b ar",
-                "_foo=bar",
-                "-foo=bar",
-                ".foo=bar",
-                "foo=bar_",
-                "foo=bar-",
-                "foo=bar."
-        ).stream()
-                .forEach(label -> assertFalse(KubernetesStep.validateLabel(SEPARATOR, label)));
+        assertFalse(testwithSeparator.apply("=a"));
+        assertFalse(testwithSeparator.apply("/foo=bar"));
+        assertFalse(testwithSeparator.apply("foo/=bar"));
+        assertFalse(testwithSeparator.apply("kubernetes-io/foo=bar"));
+        assertFalse(testwithSeparator.apply("kubernetes io/foo=bar"));
+        assertFalse(testwithSeparator.apply("kubernetes.io/foo=b ar"));
+        assertFalse(testwithSeparator.apply("_foo=bar"));
+        assertFalse(testwithSeparator.apply("-foo=bar"));
+        assertFalse(testwithSeparator.apply(".foo=bar"));
+        assertFalse(testwithSeparator.apply("foo=bar_"));
+        assertFalse(testwithSeparator.apply("foo=bar-"));
+        assertFalse(testwithSeparator.apply("foo=bar."));
 
         // components of labels are only allowed a certain length
 
@@ -53,28 +61,46 @@ public class KubernetesStepTest {
                 .mapToObj((i) -> "a")
                 .collect(Collectors.joining());
         // test if it validates
-        assertTrue(KubernetesStep.validateLabel(SEPARATOR, maxLengthPrefix + "/foo=bar"));
+        assertTrue(testwithSeparator.apply(maxLengthPrefix + "/foo=bar"));
         // make the prefix one character longer, it shouldn't validate
-        assertFalse(KubernetesStep.validateLabel(SEPARATOR, maxLengthPrefix + "a/foo=bar"));
+        assertFalse(testwithSeparator.apply(maxLengthPrefix + "a/foo=bar"));
 
         // the name part of the key can be at most 63 characters long
         final String maxLengthName = IntStream.range(0, 63)
                 .mapToObj((i) -> "b")
                 .collect(Collectors.joining());
         // test if it validates
-        assertTrue(KubernetesStep.validateLabel(SEPARATOR, maxLengthPrefix + "/" + maxLengthName + "=bar"));
+        assertTrue(testwithSeparator.apply(maxLengthPrefix + "/" + maxLengthName + "=bar"));
         // make the name of the key one character too long
-        assertFalse(KubernetesStep.validateLabel(SEPARATOR, maxLengthPrefix + "/b" + maxLengthName + "=bar"));
+        assertFalse(testwithSeparator.apply(maxLengthPrefix + "/b" + maxLengthName + "=bar"));
 
         // the value can be at most 63 characters long, like the name of the key
         final String maxLengthVal = IntStream.range(0, 63)
                 .mapToObj((i) -> "c")
                 .collect(Collectors.joining());
         // test if it validates
-        assertTrue(KubernetesStep.validateLabel(SEPARATOR,
-                maxLengthPrefix + "/" + maxLengthName + SEPARATOR + maxLengthVal));
+        assertTrue(testwithSeparator.apply(
+                maxLengthPrefix + "/" + maxLengthName + KVSEPARATOR + maxLengthVal));
         // make the val one character too long
-        assertFalse(KubernetesStep.validateLabel(SEPARATOR,
+        assertFalse(testwithSeparator.apply(
                 maxLengthPrefix + "/" + maxLengthName + "=c" + maxLengthVal));
+    }
+
+    // validate some strings containing multiple labels
+    @Test
+    public void validateAndGetLabels() throws Exception {
+        final String valid01 = "foo" + KVSEPARATOR + "bar" + SEPARATOR + "blaat" + KVSEPARATOR + "koe";
+        final Map<String, String> result01 = KubernetesStep.validateAndGetLabels(KVSEPARATOR, SEPARATOR, valid01);
+
+        assertEquals(2, result01.size());
+        assertTrue(result01.containsKey("foo"));
+        assertEquals("bar", result01.get("foo"));
+
+        assertTrue(result01.containsKey("blaat"));
+        assertEquals("koe", result01.get("blaat"));
+
+        final String invalid01 = "f!oo=bar blaat=koe";
+        exception.expect(StepException.class);
+        KubernetesStep.validateAndGetLabels(KVSEPARATOR, SEPARATOR, invalid01);
     }
 }
