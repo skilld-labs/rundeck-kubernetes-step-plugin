@@ -22,12 +22,10 @@
 
 package com.skilld.kubernetes;
 
-import com.skilld.kubernetes.JobConfiguration;
-
-import io.fabric8.kubernetes.api.model.Job;
 import io.fabric8.kubernetes.api.model.Container;
-import io.fabric8.kubernetes.api.model.VolumeMount;
+import io.fabric8.kubernetes.api.model.Job;
 import io.fabric8.kubernetes.api.model.ResourceRequirementsBuilder;
+import io.fabric8.kubernetes.api.model.VolumeMount;
 
 import java.util.List;
 import java.util.Map;
@@ -40,15 +38,12 @@ public class JobBuilder {
 				.withNamespace(configuration.getNamespace())
 			.endMetadata()
 			.withNewSpec()
-				.withNewSelector()
-				.withMatchLabels(configuration.getLabels())
-				.endSelector()
 				.withParallelism(configuration.getParallelism())
 				.withCompletions(configuration.getCompletions())
 				.withNewTemplate()
-					.withNewMetadata()
-						.withLabels(configuration.getLabels())
-					.endMetadata()
+                    .withNewMetadata()
+                        .withLabels(configuration.getLabels())
+                    .endMetadata()
 					.withNewSpec()
 						.withRestartPolicy(configuration.getRestartPolicy())
 						.addNewContainer()
