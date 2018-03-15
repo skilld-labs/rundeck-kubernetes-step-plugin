@@ -49,6 +49,7 @@ public class JobBuilder {
 						.addNewContainer()
 							.withName(configuration.getName())
 							.withImage(configuration.getImage())
+							.withImagePullPolicy(configuration.getImagePullPolicy())
 						.endContainer()
 					.endSpec()
 				.endTemplate()

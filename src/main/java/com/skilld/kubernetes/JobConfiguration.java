@@ -41,6 +41,7 @@ public class JobConfiguration {
 	private List<String> arguments;
 	private Long activeDeadlineSeconds;
 	private String restartPolicy;
+	private String imagePullPolicy;
 	private Integer completions;
 	private String namespace;
 	private Map<String, String> nodeSelector;
@@ -85,6 +86,10 @@ public class JobConfiguration {
 
 	public String getRestartPolicy() {
 		return restartPolicy;
+	}
+
+	public String getImagePullPolicy() {
+		return imagePullPolicy;
 	}
 
 	public Integer getCompletions() {
@@ -140,6 +145,10 @@ public class JobConfiguration {
 
 	public void setRestartPolicy(String _restartPolicy) {
 		restartPolicy = _restartPolicy;
+	}
+
+	public void setImagePullPolicy(String _imagePullPolicy) {
+		imagePullPolicy = _imagePullPolicy;
 	}
 
 	public void setCompletions(Integer _completions) {

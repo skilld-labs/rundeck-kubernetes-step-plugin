@@ -72,6 +72,7 @@ public class KubernetesStep implements StepPlugin, Describable {
 	public static final String KUBE_SSL = "kubeSSL";
 	public static final String IMAGE = "image";
 	public static final String IMAGE_PULL_SECRETS = "imagePullSecrets";
+	public static final String IMAGE_PULL_POLICY = "imagePullPolicy";
 	public static final String COMMAND = "command";
 	public static final String ARGUMENTS = "arguments";
 	public static final String NODE_SELECTOR = "nodeSelector";
@@ -113,6 +114,7 @@ public class KubernetesStep implements StepPlugin, Describable {
 		.property(PropertyUtil.bool(KUBE_SSL, "Kubernetes SSL Validate", "Validate the Kubernetes SSL server certificate", false, "true"))
 		.property(PropertyUtil.string(IMAGE, "Image", "The container image to use", true, null))
 		.property(PropertyUtil.string(IMAGE_PULL_SECRETS, "ImagePullSecrets", "The image pull secrets name", false, null))
+		.property(PropertyUtil.select(IMAGE_PULL_POLICY, "ImagePullPolicy", "The image pull policy", true, "Always", Arrays.asList("Always", "IfNotPresent", "Never")))
 		.property(PropertyUtil.string(COMMAND, "Command", "The command to run in the container", false, null))
 		.property(PropertyUtil.string(ARGUMENTS, "Arguments", "The command arguments", false, null))
 		.property(PropertyUtil.string(NODE_SELECTOR, "Node selector", "Kubernetes node label selector", false, null))
@@ -174,6 +176,7 @@ public class KubernetesStep implements StepPlugin, Describable {
 			jobConfiguration.setNamespace((String)configuration.get(NAMESPACE));
 			jobConfiguration.setImage((String)configuration.get(IMAGE));
 			jobConfiguration.setRestartPolicy((String)configuration.get(RESTART_POLICY));
+			jobConfiguration.setImagePullPolicy((String)configuration.get(IMAGE_PULL_POLICY));
 			jobConfiguration.setCompletions(Integer.valueOf(configuration.get(COMPLETIONS).toString()));
 			jobConfiguration.setParallelism(Integer.valueOf(configuration.get(PARALLELISM).toString()));
 			if(null != configuration.get(IMAGE_PULL_SECRETS)){
